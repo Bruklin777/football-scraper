@@ -1,3 +1,4 @@
+import time
 import requests
 
 SUPABASE_URL = "https://ncmoxbgwxfkbemurfwan.supabase.co"
@@ -7,23 +8,45 @@ headers = {
     "apikey": SUPABASE_KEY,
     "Authorization": f"Bearer {SUPABASE_KEY}",
     "Content-Type": "application/json",
+    "Prefer": "resolution=merge-duplicates,return=minimal",
 }
 
-match_data = {
-    "league": "Premier League",
-    "home_team": "Arsenal",
-    "away_team": "Chelsea",
-    "status": "LIVE",
-    "minute": 35,
-    "score": "1-0",
-    "match_time": "35'",
-    "risk_score": 85,
-}
 
-url = f"{SUPABASE_URL}/rest/v1/matches"
-response = requests.post(url, headers=headers, json=match_data)
+def fetch_live_matches():
+    # DİQQƏT: bu hissə hələ test məlumatıdır.
+    # Real API əlavə edəndə burada onun cavabını oxuyacağıq.
+    return [
+        {
+            "league": "La Liga",
+            "home_team": "Real Madrid",
+            "away_team": "Barcelona",
+            "status": "LIVE",
+            "minute": 15,
+            "score": "0-0",
+            "match_time": "15'",
+            "risk_score": 75,
+        }
+    ]
 
-if response.status_code in [200, 201]:
-    print("Məlumat uğurla yazıldı!")
-else:
-    print("Xəta:", response.text)
+
+def save_to_supabase(data):
+    if not data:
+        print("Göndəriləcək məlumat yoxdur.")
+        return
+    url = f"{SUPABASE_URL}/rest/v1/matches?on_conflict=home_team,away_team"
+    response = requests.post(url, headers=headers, json=data, timeout=15)
+    if response.status_code in [200, 201, 204]:
+        print("Məlumat Supabase-ə yazıldı!")
+    else:
+        print("Supabase xətası:", response.text)
+
+
+if __name__ == "__main__":
+    print("Scraper işə düşdü...")
+    while True:
+        try:
+            live_data = fetch_live_matches()
+            save_to_supabase(live_data)
+        except Exception as e:
+            print("Xəta:", e)
+        time.sleep(60)
