@@ -15,6 +15,12 @@ headers = {
     "Prefer": "resolution=merge-duplicates,return=minimal",
 }
 
+FS_URL = "https://local-it.flashscore.ninja/3/x/feed/f_1_0_en_1"
+FS_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "X-Fsb-Xhr": "f80b5988-d0ed-4d44-a38c-c10f11db0e9a",
+}
+
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -31,41 +37,84 @@ def run_server():
     HTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 
-def fetch_live_matches():
-    # Hələ test məlumatıdır. Sonra real API qoşacağıq.
-    return [
-        {
-            "league": "La Liga",
-            "home_team": "Real Madrid",
-            "away_team": "Barcelona",
-            "status": "LIVE",
-            "minute": 15,
-            "score": "0-0",
-            "match_time": "15'",
-            "risk_score": 75,
-        }
-    ]
+def to_int(value):
+    digits = "".join(ch for ch in str(value) if ch.isdigit())
+    return int(digits) if digits else 0
+
+
+def calculate_risk_score(minute, score):
+    if minute >= 70 and score == "0-0":
+        return 90
+    elif minute >= 60:
+        return 75
+    elif minute >= 45:
+        return 60
+    return 40
+
+
+def parse_feed(raw):
+    found = {}
+    league = "Live League"
+    for record in raw.split("~"):
+        fields = {}
+        for part in record.split("¬"):
+            if "÷" in part:
+                key, val = part.split("÷", 1)
+                fields[key] = val
+        if "ZA" in fields:
+            league = fields["ZA"]
+        if "AA" in fields and fields.get("AB") == "2":
+            home = fields.get("AE", "").strip()
+            away = fields.get("AF", "").strip()
+            if not home or not away:
+                continue
+            score = f"{to_int(fields.get('AG', 0))}-{to_int(fields.get('AH', 0))}"
+            minute = to_int(fields.get("AZ", 0))
+            found[(home, away)] = {
+                "league": league,
+                "home_team": home,
+                "away_team": away,
+                "status": "LIVE",
+                "minute": minute,
+                "score": score,
+                "match_time": f"{minute}'",
+                "risk_score": calculate_risk_score(minute, score),
+            }
+    return list(found.values())
+
+
+def fetch_flashscore_live():
+    try:
+        resp = requests.get(FS_URL, headers=FS_HEADERS, timeout=10)
+        if resp.status_code != 200:
+            print("Flashscore cavabı:", resp.status_code)
+            return []
+        matches = parse_feed(resp.text)
+        if not matches:
+            print("Canlı oyun tapılmadı. Cavabın başı:", resp.text[:200])
+        return matches
+    except Exception as e:
+        print("Flashscore xətası:", e)
+        return []
 
 
 def save_to_supabase(data):
     if not data:
-        print("Göndəriləcək məlumat yoxdur.")
         return
     url = f"{SUPABASE_URL}/rest/v1/matches?on_conflict=home_team,away_team"
-    response = requests.post(url, headers=headers, json=data, timeout=15)
-    if response.status_code in [200, 201, 204]:
-        print("Məlumat Supabase-ə yazıldı!")
+    resp = requests.post(url, headers=headers, json=data, timeout=15)
+    if resp.status_code in [200, 201, 204]:
+        print(f"Uğurlu: {len(data)} canlı oyun Supabase-ə yazıldı!")
     else:
-        print("Supabase xətası:", response.text)
+        print("Supabase xətası:", resp.text)
 
 
 if __name__ == "__main__":
     threading.Thread(target=run_server, daemon=True).start()
-    print("Scraper işə düşdü...")
+    print("Canlı Flashscore Scraper işə düşdü...")
     while True:
         try:
-            live_data = fetch_live_matches()
-            save_to_supabase(live_data)
+            save_to_supabase(fetch_flashscore_live())
         except Exception as e:
             print("Xəta:", e)
         time.sleep(60)
